@@ -2,10 +2,13 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
+// Untuk input dari button UI
+
 
 public class PlayerMovement : MonoBehaviour
 {
     [Header("Player Movement")]
+    private float mobileInputX = 0f;
     public float moveSpeed = 5f;
     public float runSpeed = 8f;
     public float jumpForce = 10f;
@@ -13,16 +16,18 @@ public class PlayerMovement : MonoBehaviour
     private Rigidbody2D rb;
     private Animator anim;
     private SpriteRenderer sprite;
-    private PlayerInputActions playerInput;
+    private PlayerController playerController; // tambahkan PlayerInputActions
+
+   
 
     private Vector2 moveInput;
     private bool isJumping = false;
 
+    private enum MovementState { idle, walk, jump, fall, run}
+
     [Header("Jump Settings")]
     [SerializeField] private LayerMask jumpableGround;
     private BoxCollider2D coll;
-
-    private bool isAttacking = false;
 
     private void Awake()
     {
@@ -31,64 +36,93 @@ public class PlayerMovement : MonoBehaviour
         sprite = GetComponent<SpriteRenderer>();
         coll = GetComponent<BoxCollider2D>();
 
-        playerInput = new PlayerInputActions();
+        playerController = new PlayerController(); //Inisialisasi PlayerInputActions
     }
 
     private void OnEnable()
     {
-        playerInput.Enable();
+        playerController.Enable();
 
-        playerInput.Movement.Move.performed += ctx => moveInput = ctx.ReadValue<Vector2>();
-        playerInput.Movement.Move.canceled += ctx => moveInput = Vector2.zero;
+        playerController.Movement.Move.performed += ctx => moveInput = ctx.ReadValue<Vector2>();
+        playerController.Movement.Move.canceled += ctx => moveInput = Vector2.zero;
 
-        playerInput.Movement.Jump.performed += ctx => Jump();
-        playerInput.Movement.Attack.performed += ctx => Attack();  // Pastikan ada action "Attack"
+        playerController.Movement.Jump.performed += ctx => Jump();
+
+        
     }
 
     private void OnDisable()
     {
-        playerInput.Disable();
+        playerController.Disable();
     }
 
     private void Update()
     {
-        moveInput = playerInput.Movement.Move.ReadValue<Vector2>();
+        // Jika menggunakan mobile input, pakai itu
+        if (Application.isMobilePlatform)
+        {
+            moveInput = new Vector2(mobileInputX, 0f);
+        }
+        else
+        {
+            // Kalau bukan mobile, pakai Input System
+            moveInput = playerController.Movement.Move.ReadValue<Vector2>();
+        }
+
     }
 
     private void FixedUpdate()
     {
-        Vector2 targetVelocity = new Vector2(moveInput.x * moveSpeed, rb.velocity.y);
+        //gabungan mobile
+        Vector2 targetVelocity = new Vector2((moveInput.x + mobileInputX) * moveSpeed, rb.velocity.y);
         rb.velocity = targetVelocity;
 
         UpdateAnimation();
+
+        // Reset isJumping hanya saat grounded dan velocity Y mendekati 0
+        if (isGrounded() && Mathf.Abs(rb.velocity.y) < 0.01f)
+        {
+            isJumping = false;
+        }
+
     }
 
     private void UpdateAnimation()
     {
-        if (isAttacking)
-        {
-            anim.Play("attack"); // nama animasi harus sesuai yang ada di Animator
-            return;
-        }
+        MovementState state;
 
-        if (!isGrounded())
+        // Gabungkan input dari keyboard dan mobile
+        float horizontal = moveInput.x != 0 ? moveInput.x : mobileInputX;
+
+        // Cek arah jalan
+        if (horizontal > 0f)
         {
-            anim.Play("jump-all");
+            state = MovementState.walk;
+            sprite.flipX = false;
         }
-        else if (moveInput.x != 0f)
+        else if (horizontal < 0f)
         {
-            anim.Play("run");
+            state = MovementState.walk;
+            sprite.flipX = true;
         }
         else
         {
-            anim.Play("idle");
+            state = MovementState.idle;
         }
 
-        if (moveInput.x > 0f)
-            sprite.flipX = false;
-        else if (moveInput.x < 0f)
-            sprite.flipX = true;
+        // Cek apakah sedang lompat atau jatuh
+        if (rb.velocity.y > 0.1f)
+        {
+            state = MovementState.jump;
+        }
+        else if (rb.velocity.y < -0.1f)
+        {
+            state = MovementState.fall;
+        }
+
+        anim.SetInteger("state", (int)state);
     }
+
 
     private bool isGrounded()
     {
@@ -97,27 +131,37 @@ public class PlayerMovement : MonoBehaviour
 
     private void Jump()
     {
+        // Cek ulang grounded saat ini, dan jangan gunakan isJumping (karena bisa delay)
         if (isGrounded())
         {
             rb.velocity = new Vector2(rb.velocity.x, jumpForce);
+            isJumping = true;
         }
     }
 
-    private void Attack()
+    // Fungsi ini dipanggil saat tombol kanan ditekan
+    public void MoveRight(bool isPressed)
     {
-        if (!isAttacking)
+        if (isPressed)
+            mobileInputX = 1f;
+        else if (mobileInputX == 1f)
+            mobileInputX = 0f;
+    }
+
+    public void MoveLeft(bool isPressed)
+    {
+        if (isPressed)
+            mobileInputX = -1f;
+        else if (mobileInputX == -1f)
+            mobileInputX = 0f;
+    }
+
+    // Fungsi ini dipanggil saat tombol lompat ditekan
+    public void MobileJump()
+    {
+        if (isGrounded())
         {
-            StartCoroutine(AttackRoutine());
+            Jump();
         }
-    }
-
-    private IEnumerator AttackRoutine()
-    {
-        isAttacking = true;
-        anim.Play("attack");
-
-        yield return new WaitForSeconds(0.5f); // sesuaikan durasi animasi attack
-
-        isAttacking = false;
     }
 }
